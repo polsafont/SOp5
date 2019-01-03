@@ -11,10 +11,6 @@
 
 #include "ficheros-csv.h"
 
-
-//mutex del fitxer
-pthread_mutex_t mutex_file = PTHREAD_MUTEX_INITIALIZER;
-
 // variables globals compartides
 
 int w = 0;
@@ -238,53 +234,55 @@ void fill_airports_data(struct parameters *par, flight_information *fi) {
 
 void *productor(void *arg)
 {
-    //printf("producer thread  ID %d\n", pthread_self());
+    // printf("producer thread  ID %d\n", pthread_self());
     char line[MAXCHAR];
+
     struct cell *productor;
     struct cell *tmp;
     productor  = malloc(sizeof(struct cell));
+
     struct parameters *par = (struct parameters *) arg;
     int invalid;
-
-    while(llegint){
+    int dades = 1;
+    while(dades){
         //generar dades
-        // bloquejem fitxer mentres llegim M linies  per si volem afegir productors mes endavant
-        //pthread_mutex_lock(&mutex_file);
+
+        // bloquejem fitxer per si volem afegir productors mes endavant
+        // pthread_mutex_lock(&mutex_file);
         for(int i=0; i < N; i++){
             if( fgets(line, MAXCHAR, par->fp) ){
                 strncpy(productor->str[i],line, sizeof(line));
                 productor->mida = i + 1;
             }
             else{
-                llegint = 0;
-                //Fi de lectura del fitxer de disc per part del fil
-                printf("ULTIMA LECTURA , llegint = %d\n", llegint);
+                // Fi de lectura del fitxer de disc per part del fil.
+                dades = 0;
                 break;
             }
         }
-        // desbloquejem fitxer
-        //pthread_mutex_unlock(&mutex_file);
+        // desbloquejem fitxer en cas de multiples productors
+        // pthread_mutex_unlock(&mutex_file);
+
         // bloquejem buffer mutex
         pthread_mutex_lock(&mutex);
         // cas que buffer sigui ple esperar a condP
         while(comptador == B ){
             pthread_cond_wait(&condP, &mutex);   
         }
-        //printf("producer lock cond\n");
-        
-        //copia dades a buffer[w]
+        // copia dades a buffer[w]
         tmp = par->buffer->cell[w];
         par->buffer->cell[w] = productor;
         productor = tmp;
+        // actualitzar w i comptador
         w = (w + 1) % N;
         comptador++;
-        //printf("COMPTADOR P %d\n", comptador);
-        //printf("comptador productor: %d\n",comptador);
+  
+        // cridem signal condC i desbloquejem  mutex
         pthread_cond_signal(&condC);
         pthread_mutex_unlock(&mutex);
-        printf("producer unlock cond\n");
     }
-    printf("FIL LECTURA FINALITZAT\n");
+    // var global llegint a 0 per avisar a consumidors
+    llegint = 0;
     free(productor);
     return ((void *)0);
 }
@@ -295,62 +293,43 @@ void *productor(void *arg)
 
 void *consumidor(void *arg)
 {    
-    printf("consumer thread  ID %d\n", pthread_self());
-
+    // printf("consumer thread  ID %d\n", pthread_self());
     char line[MAXCHAR];
+
     struct cell *consumidor;
     struct cell *tmp;
     consumidor  = malloc(sizeof(struct cell));
+
     struct parameters *par = (struct parameters *) arg;
-
     int invalid;
-    int n_llegits = 0;
-
+    int mida;
     flight_information fi;
 
     while( true ){
-    //while(true) {
-
         pthread_mutex_lock(&mutex);
-
-        // esperem nous blocs de dades
-        //while((llegint == 1) | (comptador == 0)){   
+        // esperem nous blocs de dades 
         while((llegint == 1) & (comptador == 0)){   
-            printf("C WAIT, llegint: %d , comptador: %d\n", llegint, comptador);
+            //printf("C WAIT, llegint: %d , comptador: %d\n", llegint, comptador);
             pthread_cond_wait(&condC, &mutex); 
         } 
-        /*
-        if ( (llegint == 0) & (comptador == 0) ){
-                printf("FINALITZAR CONSUMIDOR1 ID %d\n", pthread_self());
-                pthread_cond_signal(&condC);
-                pthread_mutex_unlock(&mutex);
-                return ((void *)0);
-        }
-        */
-
+        // si blocs = 0 i no llegim mes, finalitzem
         if( (llegint == 0) & (comptador == 0) ) break;
-        //if (!llegint & comptador) break;
-        //printf("producer lock cond. ID %d\n", pthread_self());
+
         //copia dades de buffer[w]
         tmp = consumidor;
         consumidor = par->buffer->cell[r];
         par->buffer->cell[r] = tmp;
-
-
+        mida = consumidor->mida;
+        // actualitzem r i comptador
         r = (r + 1) % N;
-        //printf("comptador r: %d\n",r);
         comptador--;
-        printf("comptador C %d\n", comptador);
-        //printf("comptador consumidor: %d\n",comptador);
 
+        // desbloquejem mutex i cridem signal a condP
         pthread_cond_signal(&condP);
         pthread_mutex_unlock(&mutex);
 
-        //printf("producer unlock cond\n");
-        //consumir dades
-
-        //iter buffer
-        for(int i = 0; i < consumidor->mida; i++){
+        //consumir dades, iterem buffer
+        for(int i = 0; i < mida; i++){
             // extract fields airports
             invalid = extract_fields_airport(consumidor->str[i], &fi);
             if(!invalid){
@@ -358,10 +337,11 @@ void *consumidor(void *arg)
             }
         }
     }
-    printf("FINALITZAR CONSUMIDOR\n");
-    free(consumidor);
+
+    // alliberem memoria i seguent thread a condC 
     pthread_cond_signal(&condC);
     pthread_mutex_unlock(&mutex);
+    free(consumidor);
     return ((void *)0);
 }
 
@@ -435,6 +415,9 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
     clock_t t1, t2;
     t1 = clock();
 
+    //mutex del fitxer
+    //pthread_mutex_init(&mutex_file, NULL);  
+    
     // init mutex i cond
     pthread_mutex_init(&mutex, NULL); 
     pthread_cond_init(&condP, NULL);
@@ -467,8 +450,6 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
         exit(EXIT_FAILURE);
     }
 
-
-    printf("WAIT consumers\n");
     /* Esperem amb el joint fins que acabin els threads */
     for(int i=0; i < THREADS; i++){
         err = pthread_join(ntid[i], NULL);
@@ -476,17 +457,11 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
             printf("Error al pthread_join dels consuumidors.\n");
             exit(EXIT_FAILURE);
         }
-        printf("JOINED consumer\n");
     }
-    printf("JOINED all consumers\n");
-
 
     /* finalitzem contadors de temps */
     gettimeofday(&tv2, NULL);
     t2 = clock();
-
-
-
     printf("Temps cronologic: %f seconds\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec));
     printf("Temps de CPU: %f seconds\n", (double)(t2 - t1) / (double) CLOCKS_PER_SEC);
 
@@ -495,11 +470,13 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
     fclose(par->fp);
 
     // alliberem memoria
+    
     for (int i = 0; i < B; i++){
         free(buffer->cell[i]);
     }
+    
     free(buffer);
-    //free(par);
+    free(par);
 
 
     return tree;
