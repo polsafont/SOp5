@@ -8,9 +8,9 @@
 #define AEROPUERTO_DESTINO 18
 
 #define MAXCHAR 500
-#define N 1000
-#define B 10
-#define THREADS 5
+#define N 100
+#define B 100
+#define THREADS 50
 
 //B blocs amb N linies cada un
 
@@ -21,12 +21,13 @@ typedef struct flight_information {
 } flight_information;
 
 struct cell {
-    char str[N][MAXCHAR];
+    //char str[N][MAXCHAR];
+    char** str;
     int mida;
 };
 
 struct buffer {
-    struct cell *cell[B];
+    struct cell* cell[B];
     int mida;
 };
 

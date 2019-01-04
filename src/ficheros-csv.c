@@ -61,8 +61,8 @@ void read_airports(rb_tree *tree, FILE *fp)
 
         //pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
         //n_data->mutex = mutex;
-        n_data->mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
-
+        //n_data->mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_init(&n_data->mutex, NULL); 
         /* Suponemos que los nodos son unicos, no hace falta
          * comprobar si ya existen previamente.
          */
@@ -216,7 +216,7 @@ void fill_airports_data(struct parameters *par, flight_information *fi) {
 
             insert_list(n_data->l, l_data);
         }
-        // desbloquejem node
+        // desbloquejem el node
         pthread_mutex_unlock(&n_data->mutex);
 
     } else {
@@ -232,18 +232,26 @@ void fill_airports_data(struct parameters *par, flight_information *fi) {
  * mientras bloquea fitxero
  */
 
-void *productor(void *arg)
+void *productor_fn(void *arg)
 {
-    // printf("producer thread  ID %d\n", pthread_self());
+    printf("producer thread  ID %d CREATE\n", pthread_self());
     char line[MAXCHAR];
 
     struct cell *productor;
     struct cell *tmp;
-    productor  = malloc(sizeof(struct cell));
 
+    productor = (struct cell *) malloc(sizeof(struct cell));
+    productor->str = malloc(sizeof(char*)*N);
+    productor->mida = 0;
+
+    for (int i = 0; i < N; i++ ){
+    	productor->str[i] = malloc(sizeof(char)*MAXCHAR);
+
+    } 
     struct parameters *par = (struct parameters *) arg;
     int invalid;
     int dades = 1;
+
     while(dades){
         //generar dades
 
@@ -274,7 +282,8 @@ void *productor(void *arg)
         par->buffer->cell[w] = productor;
         productor = tmp;
         // actualitzar w i comptador
-        w = (w + 1) % N;
+        w = (w + 1) % B;
+        
         comptador++;
   
         // cridem signal condC i desbloquejem  mutex
@@ -283,7 +292,17 @@ void *productor(void *arg)
     }
     // var global llegint a 0 per avisar a consumidors
     llegint = 0;
+    printf("free producer\n");
+    
+    for ( int i = 0; i < N; i++ ){
+    	free( productor->str[i] );
+	}
+	
+    free(productor->str);
+
     free(productor);
+	
+    printf("producer thread  ID %d EXIT\n", pthread_self());
     return ((void *)0);
 }
 
@@ -291,18 +310,24 @@ void *productor(void *arg)
  * Funcion d'entrada als threads consumidors
  */
 
-void *consumidor(void *arg)
+void *consumidor_fn(void *arg)
 {    
-    // printf("consumer thread  ID %d\n", pthread_self());
+    printf("consumer thread  ID %d CREATE\n", pthread_self());
     char line[MAXCHAR];
 
     struct cell *consumidor;
     struct cell *tmp;
-    consumidor  = malloc(sizeof(struct cell));
+
+    consumidor  = (struct cell*) malloc(sizeof(struct cell));
+    //consumidor->str = (char**) malloc(sizeof(char*)*N);
+    consumidor->str = malloc(sizeof(char*)*N);
+    consumidor->mida = 0;
+    for (int i = 0; i < N; i++ ){
+    	consumidor->str[i] = malloc(sizeof(char)*MAXCHAR);
+    }
 
     struct parameters *par = (struct parameters *) arg;
     int invalid;
-    int mida;
     flight_information fi;
 
     while( true ){
@@ -319,9 +344,8 @@ void *consumidor(void *arg)
         tmp = consumidor;
         consumidor = par->buffer->cell[r];
         par->buffer->cell[r] = tmp;
-        mida = consumidor->mida;
         // actualitzem r i comptador
-        r = (r + 1) % N;
+        r = (r + 1) % B;
         comptador--;
 
         // desbloquejem mutex i cridem signal a condP
@@ -329,7 +353,7 @@ void *consumidor(void *arg)
         pthread_mutex_unlock(&mutex);
 
         //consumir dades, iterem buffer
-        for(int i = 0; i < mida; i++){
+        for(int i = 0; i < consumidor->mida; i++){
             // extract fields airports
             invalid = extract_fields_airport(consumidor->str[i], &fi);
             if(!invalid){
@@ -339,9 +363,24 @@ void *consumidor(void *arg)
     }
 
     // alliberem memoria i seguent thread a condC 
-    pthread_cond_signal(&condC);
+    //pthread_cond_signal(&condC);
+    //pthread_mutex_unlock(&mutex);
+    
+    //alliberem condC i mutex
+    pthread_cond_broadcast(&condC);
     pthread_mutex_unlock(&mutex);
+
+    printf("free consumer\n");
+    
+    for ( int i = 0; i < N; i++ ){
+    	free(consumidor->str[i]);
+	}
+	
+    free(consumidor->str);
+    
     free(consumidor);
+    
+    printf("consumer thread  ID %d EXIT\n", pthread_self());
     return ((void *)0);
 }
 
@@ -392,15 +431,26 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
        El struct esta definit a "ficheros-csv.h", fem el import a dalt. */
 
     struct parameters *par;
-    par = malloc(sizeof(struct parameters));
+    par = (struct parameters *) malloc(sizeof(struct parameters));
 
     // crear buffer circular
+    
+
+
+
     struct buffer *buffer;
     buffer = malloc(sizeof(struct buffer));
-    for(int i = 0; i < B; i++){
+
+    for(int i = 0; i < B; i++) {
+
         buffer->cell[i] = malloc(sizeof(struct cell));
+        buffer->cell[i]->str =  malloc(sizeof(char*)*N);
+        for (int j = 0; j < N; j++){
+        	buffer->cell[i]->str[j] =  malloc(sizeof(char)*MAXCHAR);
+        }
     }
 
+    printf("par\n");
     /* Copiem el fitxer de dades, buffer compartit i l'arbre a la estructura per passar com a parametres */
     par->fp = fp;
     par->tree = tree;
@@ -417,7 +467,7 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
 
     //mutex del fitxer
     //pthread_mutex_init(&mutex_file, NULL);  
-    
+    printf("mutex\n");
     // init mutex i cond
     pthread_mutex_init(&mutex, NULL); 
     pthread_cond_init(&condP, NULL);
@@ -425,24 +475,24 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
 
 
     /* Se leen los datos y se introducen en el arbol */
-    /* Creació dels thread consumidors i produdctor, com a parametre passem la funció de llegir data i el struct amb els parametres */
-
+    /* Creació dels thread consumidors i productor, com a parametre passem la funció de llegir data i el struct amb els parametres */
+    printf("threads create\n");
     //productor
-    err = pthread_create(&(ptid), NULL, productor, (void *)par);
+    err = pthread_create(&(ptid), NULL, productor_fn, (void *)par);
     if (err!=0) {
         printf("No es pot crear el thread productor.\n");
         exit(EXIT_FAILURE);
     }
 
-    //consumidors
+    // consumidors
     for(int i = 0; i < THREADS; i++){
-        err = pthread_create(&(ntid[i]), NULL, consumidor, (void *)par);
+        err = pthread_create(&(ntid[i]), NULL, consumidor_fn, (void *)par);
         if (err!=0) {
             printf("No es poden crear els threads consumidors.\n");
             exit(EXIT_FAILURE);
         }
     }
-
+    printf("threads join\n");
     // wait producer and consumers
     err = pthread_join(ptid, NULL);
     if (err!=0) {
@@ -458,26 +508,33 @@ rb_tree *create_tree(char *str_airports, char *str_dades)
             exit(EXIT_FAILURE);
         }
     }
-
+    printf("timers\n");
     /* finalitzem contadors de temps */
     gettimeofday(&tv2, NULL);
     t2 = clock();
     printf("Temps cronologic: %f seconds\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec));
     printf("Temps de CPU: %f seconds\n", (double)(t2 - t1) / (double) CLOCKS_PER_SEC);
-
+    printf("close file\n");
     // tanquem fitxer
     fclose(fp);
-    fclose(par->fp);
 
-    // alliberem memoria
+
+    //eliminem mutex
+
+    // alliberem memòria
     
-    for (int i = 0; i < B; i++){
+    printf("free memory create tree\n");
+    for(int i = 0; i < B; i++) {
+    	for (int j = 0; j < N; j++){
+        	free( buffer->cell[i]->str[j] );
+        }
+        free(buffer->cell[i]->str);
         free(buffer->cell[i]);
     }
     
     free(buffer);
     free(par);
-
-
+    printf("end create tree\n");
+    printf("w %d, r %d , comptador %d", w,r,comptador);
     return tree;
 }
