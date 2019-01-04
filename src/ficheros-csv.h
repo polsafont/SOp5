@@ -8,9 +8,9 @@
 #define AEROPUERTO_DESTINO 18
 
 #define MAXCHAR 500
-#define N 100
-#define B 100
-#define THREADS 50
+#define N 1000
+#define B 10
+#define THREADS 5
 
 //B blocs amb N linies cada un
 
